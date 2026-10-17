@@ -1,4 +1,4 @@
-# Kinski Polygraph --- Raspberry Pi 4 Model B
+Raspberry Pi 4 Model B
 
 This is a Raspberry Pi 4 Model B adaptation of the original
 `NanoLieDetector.ino` project. The source sketch has now been reviewed
