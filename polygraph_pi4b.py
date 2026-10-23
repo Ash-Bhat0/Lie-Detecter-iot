@@ -17,8 +17,8 @@ PulseSensorPlayground interrupt-based library; calibrate the threshold.
 """
 
 import time
-import spidev
-from gpiozero import PWMOutputDevice
+import math
+import random
 
 # --- Hardware pins (BCM numbering) ---
 PULSE_METER_GPIO = 18
@@ -43,21 +43,67 @@ PULSE_BEAT_PWM = 12
 PULSE_REST_PWM = 2
 METER_PWM_MAX = 255
 
-pulse_meter = PWMOutputDevice(PULSE_METER_GPIO, frequency=1000, initial_value=0)
-gsr_meter = PWMOutputDevice(GSR_METER_GPIO, frequency=1000, initial_value=0)
-buzzer = PWMOutputDevice(BUZZER_GPIO, frequency=50, initial_value=0)
+# Mock device helper for non-Raspberry Pi environments
+class MockPWMDevice:
+    def __init__(self, pin, frequency=1000, initial_value=0):
+        self.pin = pin
+        self.value = initial_value
+    def close(self):
+        pass
 
-spi = spidev.SpiDev()
-spi.open(0, 0)  # SPI bus 0, CE0
-spi.max_speed_hz = 1_000_000
+# Attempt to load gpiozero
+try:
+    from gpiozero import PWMOutputDevice
+    pulse_meter = PWMOutputDevice(PULSE_METER_GPIO, frequency=1000, initial_value=0)
+    gsr_meter = PWMOutputDevice(GSR_METER_GPIO, frequency=1000, initial_value=0)
+    buzzer = PWMOutputDevice(BUZZER_GPIO, frequency=50, initial_value=0)
+    HAS_GPIO = True
+except Exception:
+    pulse_meter = MockPWMDevice(PULSE_METER_GPIO)
+    gsr_meter = MockPWMDevice(GSR_METER_GPIO)
+    buzzer = MockPWMDevice(BUZZER_GPIO)
+    HAS_GPIO = False
+
+# Attempt to load spidev
+HAS_SPI = False
+spi = None
+try:
+    import spidev
+    spi = spidev.SpiDev()
+    spi.open(0, 0)  # SPI bus 0, CE0
+    spi.max_speed_hz = 1_000_000
+    HAS_SPI = True
+except Exception:
+    HAS_SPI = False
+
+
+# Simulation state for mock mode
+sim_phase = 0.0
+sim_bpm = 72.0
 
 
 def read_adc(channel: int) -> int:
     """Read MCP3008 channel 0..7, returning 0..1023."""
-    if not 0 <= channel <= 7:
-        raise ValueError("MCP3008 channel must be between 0 and 7")
-    response = spi.xfer2([1, (8 + channel) << 4, 0])
-    return ((response[1] & 3) << 8) | response[2]
+    global sim_phase
+    if HAS_SPI and spi is not None:
+        if not 0 <= channel <= 7:
+            raise ValueError("MCP3008 channel must be between 0 and 7")
+        response = spi.xfer2([1, (8 + channel) << 4, 0])
+        return ((response[1] & 3) << 8) | response[2]
+    else:
+        # Realistic signal simulation if running on PC without SPI hardware
+        if channel == PULSE_CHANNEL:
+            freq = sim_bpm / 60.0
+            sim_phase += 2.0 * math.pi * freq * SAMPLE_INTERVAL
+            wave = math.sin(sim_phase) + 0.35 * math.sin(2.0 * sim_phase)
+            return int(np_clip(512 + 200 * wave + random.uniform(-10, 10), 0, 1023))
+        elif channel == GSR_CHANNEL:
+            return int(np_clip(450 + random.uniform(-15, 15), 0, 1023))
+        return 0
+
+
+def np_clip(val, low, high):
+    return max(low, min(high, val))
 
 
 def pwm_from_arduino(value: int) -> float:
@@ -83,6 +129,8 @@ def main() -> None:
     baseline_initialized = False
 
     print("Kinski Polygraph started — Raspberry Pi 4 Model B")
+    if not (HAS_SPI and HAS_GPIO):
+        print("[Notice] Running in simulation/test mode (spidev/gpiozero hardware not detected).")
     print(f"Pulse threshold: {THRESHOLD}")
     print("Press Ctrl+C to stop.")
     print("Note: this is an experimental physiological-response device, not a lie detector.")
@@ -167,7 +215,8 @@ def main() -> None:
         pulse_meter.value = 0
         gsr_meter.value = 0
         buzzer.value = 0
-        spi.close()
+        if HAS_SPI and spi is not None:
+            spi.close()
 
 
 if __name__ == "__main__":

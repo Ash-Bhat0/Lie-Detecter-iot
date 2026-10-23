@@ -1,0 +1,11 @@
+# Machine Learning & Data Processing Requirements
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+
+# Hardware libraries (Required on Raspberry Pi with physical MCP3008 ADC & GPIO)
+# Uncomment these when deploying on Raspberry Pi OS:
+# spidev>=3.6
+# gpiozero>=2.0

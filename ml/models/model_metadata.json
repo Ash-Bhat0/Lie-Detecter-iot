@@ -1,0 +1,46 @@
+{
+  "model_name": "RandomForest",
+  "feature_names": [
+    "bpm_mean",
+    "bpm_max",
+    "bpm_min",
+    "bpm_std",
+    "bpm_delta",
+    "bpm_max_delta",
+    "hrv_sdnn",
+    "hrv_rmssd",
+    "hrv_pnn50",
+    "pulse_mean",
+    "pulse_std",
+    "pulse_amplitude",
+    "gsr_mean",
+    "gsr_max",
+    "gsr_min",
+    "gsr_std",
+    "gsr_delta",
+    "gsr_max_delta",
+    "gsr_ratio",
+    "gsr_max_ratio",
+    "gsr_max_slope",
+    "gsr_scr_peaks",
+    "gsr_auc",
+    "stress_index"
+  ],
+  "metrics": {
+    "cv_accuracy": 1.0,
+    "cv_f1": 1.0,
+    "cv_roc_auc": 1.0
+  },
+  "feature_importances": {
+    "gsr_scr_peaks": 0.1166,
+    "gsr_max_ratio": 0.11,
+    "gsr_max_delta": 0.11,
+    "gsr_std": 0.11,
+    "bpm_max_delta": 0.0914,
+    "bpm_delta": 0.09,
+    "gsr_delta": 0.08,
+    "gsr_ratio": 0.08
+  },
+  "trained_at": "2026-10-23T17:23:14.389076",
+  "num_samples": 180
+}

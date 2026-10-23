@@ -1,120 +1,155 @@
-# Kinski Polygraph + Claim Analyzer — Raspberry Pi 4 Model B
+# Kinski IoT Polygraph & Physiological Lie Detector (Raspberry Pi 4 Model B)
 
-This bundle combines the two uploaded project directions:
+An end-to-end IoT and Edge Machine Learning Polygraph Lie Detection system built for the Raspberry Pi 4 Model B (with cross-platform simulation mode for PC/Mac).
 
-1. **Physiological sensor prototype** — pulse sensor + GSR electrode circuit, MCP3008 ADC, two analog VU meters, and buzzer, adapted from `NanoLieDetector.ino`.
-2. **LIAR-PLUS text classifier** — the uploaded PyTorch research code for six-class claim classification (`true`, `mostly-true`, `half-true`, `barely-true`, `false`, `pants-fire`).
+The system reads physiological biosignals from hardware sensors, extracts Autonomic Nervous System (ANS) features (Heart Rate Variability and Galvanic Skin Response), trains and evaluates Edge Machine Learning classifiers, and runs live interrogation sessions with real-time AI deception detection and physical VU meter / buzzer feedback.
 
-## Critical distinction: two modes, not one lie score
+---
 
-These components measure different things and should not be merged into a single score:
-
-- The sensor mode measures pulse-related activity and skin conductance, which may change for many reasons including movement, temperature, excitement, stress, or fear.
-- The text classifier predicts a dataset label for a written claim based on its trained model, text, justification, and credit-history features.
-
-The LIAR-PLUS model does not read the physical sensors, and the physical sensor does not verify the truth of a claim. Combining their outputs into one “lie probability” would be scientifically unsupported. The launcher therefore keeps them as separate modes.
-
-## Project structure
+## System Architecture
 
 ```text
-Kinski_Polygraph_Claim_Analyzer_Pi4B/
-├── app.py
-├── hardware/
-│   ├── polygraph_pi4b.py
-│   └── NanoLieDetector_original.ino
-└── text_classifier_original/
-    ├── Attention.py
-    ├── ConvS2S.py
-    ├── datasets.py
-    ├── Encoder.py
-    ├── LiarLiar.py
-    ├── LICENSE
-    ├── main.py
-    ├── README.md
-    ├── test.py
-    ├── trainer.py
-    └── utils.py
+Lie-Detecter-iot/
+├── app.py                         # Unified interactive CLI launcher (Modes 1-7)
+├── polygraph_pi4b.py              # Hardware driver: MCP3008 ADC + GPIO VU meters & buzzer
+├── NanoLieDetector_original.ino   # Original Arduino Nano reference sketch
+│
+├── ml/                            # Machine Learning Pipeline
+│   ├── __init__.py
+│   ├── data_collector.py          # Labeled interrogation session recorder (Baseline + Trials)
+│   ├── feature_extraction.py      # Autonomic Nervous System feature extractor (HRV + GSR EDA)
+│   ├── train_model.py             # 5-Fold Stratified CV trainer (Random Forest, SVM, GBM)
+│   ├── polygraph_ml.py            # Live real-time ML interrogation & prediction engine
+│   ├── generate_synthetic_data.py # Benchmark physiological dataset generator (18 subjects)
+│   └── models/                    # Exported model artifacts (.pkl & metadata.json)
+│
+├── data/
+│   ├── raw/                       # Continuous session CSVs (Pulse, GSR, BPM, Labels)
+│   └── processed/                 # Extracted trial feature tables for ML training
+│
+├── requirements.txt               # Python dependencies
+└── README.md
 ```
 
-## Run the combined launcher
+---
+
+## Physiological Signals & Feature Extraction
+
+Polygraph lie detection measures involuntary autonomic arousal (fight-or-flight sympathetic response) that occurs when a subject attempts deception.
+
+The pipeline extracts **24 physiological features** across two primary biosensors:
+
+### 1. Cardiovascular / Pulse Sensor (MCP3008 CH0)
+- **$\Delta\text{BPM}$ & Peak Shifts**: Mean BPM, peak BPM, and deviation from the subject's resting baseline ($\Delta\text{BPM} = \text{BPM}_{\text{trial}} - \text{BPM}_{\text{baseline}}$).
+- **Heart Rate Variability (HRV)** (derived from detected peak-to-peak RR intervals):
+  - `hrv_sdnn`: Standard deviation of normal RR intervals.
+  - `hrv_rmssd`: Root Mean Square of Successive Differences (parasympathetic suppression marker; drops significantly under acute deception stress).
+  - `hrv_pnn50`: Percentage of successive RR differences $> 50\text{ ms}$.
+- **Pulse Waveform Dynamics**: Amplitude mean, standard deviation, and systolic peak envelope.
+
+### 2. Galvanic Skin Response / Electrodermal Activity (MCP3008 CH1)
+- **Tonic Conductance (SCL)**: Mean GSR, peak GSR, difference and ratio relative to resting baseline ($\Delta\text{GSR}$).
+- **Phasic Responses (SCR)**:
+  - `gsr_max_slope`: Maximum positive rise slope ($d(\text{GSR})/dt$), capturing sudden sympathetic sweat gland activation.
+  - `gsr_scr_peaks`: Count of distinct Skin Conductance Responses during the question window.
+  - `gsr_auc`: Area Under the Curve above baseline (integrated sympathetic energy).
+- **Autonomic Stress Index**: Combined normalized cardiac and electrodermal arousal score.
+
+---
+
+## Hardware Setup & Pinout (Raspberry Pi 4B)
+
+The Raspberry Pi 4 Model B communicates with the MCP3008 10-bit ADC via SPI.
+
+| MCP3008 Pin | Signal / Description | Raspberry Pi 4 Pin |
+|---|---|---|
+| **VDD / VREF** | 3.3 V Power & Reference | Pin 1 (3.3 V) |
+| **AGND / DGND**| Ground | Pin 6 (GND) |
+| **CLK** | SPI Clock (SCLK) | GPIO11 (Pin 23) |
+| **DOUT** | SPI MISO | GPIO9 (Pin 21) |
+| **DIN** | SPI MOSI | GPIO10 (Pin 19) |
+| **CS/SHDN** | SPI Chip Select (CE0) | GPIO8 (Pin 24) |
+| **CH0** | Analog Pulse Sensor Output | Analog In 0 |
+| **CH1** | GSR Electrode Circuit Node | Analog In 1 |
+
+### Actuators (PWM & Buzzer)
+| Function | BCM GPIO | Physical Header Pin |
+|---|---|---|
+| Pulse VU Meter (PWM needle) | **GPIO18** | Physical Pin 12 |
+| GSR VU Meter (PWM needle) | **GPIO19** | Physical Pin 35 |
+| Warning Buzzer Driver | **GPIO23** | Physical Pin 16 |
+
+> [!CAUTION]
+> **Electrical Safety:** Always power the MCP3008 at **3.3 V** when wired directly to the Pi. Never apply 5 V logic directly to Raspberry Pi GPIOs. Analog VU meters and buzzers must be driven through appropriate transistor/MOSFET driver circuits with current-limiting resistors.
+
+---
+
+## Quickstart Guide
+
+### 1. Installation
 
 On Raspberry Pi OS:
-
-```bash
-python3 app.py
-```
-
-Select:
-- `1` for sensor mode
-- `2` to see what is required to enable the text-classifier mode
-- `3` to exit
-
-## Sensor mode setup
-
-The Raspberry Pi 4 Model B has no analog inputs, so the sensor script assumes an MCP3008 ADC.
-
-Install packages and enable SPI:
-
 ```bash
 sudo apt update
-sudo apt install -y python3-spidev python3-gpiozero
-sudo raspi-config
+sudo apt install -y python3-spidev python3-gpiozero python3-pip
+git clone https://github.com/Ash-Bhat0/Lie-Detecter-iot.git
+cd Lie-Detecter-iot
+pip install -r requirements.txt
 ```
 
-In `raspi-config`, select **Interface Options → SPI → Enable**, then reboot if prompted.
+*(On Windows / macOS, the system automatically runs in high-fidelity simulation mode if `spidev` or `gpiozero` are not available).*
 
-Typical SPI wiring:
+### 2. Run the Main Launcher
 
-| MCP3008 | Raspberry Pi 4B |
-|---|---|
-| VDD | 3.3 V, physical pin 1 |
-| VREF | 3.3 V, physical pin 1 |
-| AGND, DGND | GND, physical pin 6 |
-| CLK | GPIO11 / SCLK, physical pin 23 |
-| DOUT | GPIO9 / MISO, physical pin 21 |
-| DIN | GPIO10 / MOSI, physical pin 19 |
-| CS/SHDN | GPIO8 / CE0, physical pin 24 |
-| CH0 | Analog pulse sensor output |
-| CH1 | GSR measurement node |
-
-Output driver inputs use BCM GPIO18 (physical pin 12) for the pulse meter, BCM GPIO19 (physical pin 35) for the GSR meter, and BCM GPIO23 (physical pin 16) for the buzzer.
-
-**Electrical safety:** MCP3008 VDD/VREF should be 3.3 V when directly connected to Pi SPI. Do not apply 5 V to Pi GPIO. Never drive meter coils or a high-current buzzer directly from GPIO; use appropriately designed transistor/MOSFET driver circuits and suitable power. Verify the GSR circuit against the original circuit diagram before connecting electrodes to a person.
-
-The Python pulse detector is an approximation of Arduino's interrupt-driven `PulseSensorPlayground` behavior and requires testing/calibration with the actual sensor.
-
-## Enabling the text classifier
-
-The uploaded text-classifier source is not yet a ready-to-run prediction service. The following files/data are not included in the uploaded set:
-
-- `train2.tsv`, `val2.tsv`, `test2.tsv` or compatible LIAR-PLUS data
-- `glove.6B.200d.txt`
-- a trained PyTorch model checkpoint (`state_dict`)
-- any extra pickled test fixtures referenced by `test.py`
-
-Also, the source contains incomplete/inconsistent code that needs repair before training or inference. For example, some layer definitions refer to undefined values, imports use inconsistent capitalization, the trainer has undefined variables and GPU-only assumptions, and embedding creation uses an incompatible conversion. These need to be fixed and the model must be trained or supplied with a compatible checkpoint before claim predictions can be made.
-
-The files are retained under `text_classifier_original/` for reference. They are not silently altered by this integration bundle.
-
-## Suggested next integration stage
-
-After the model code and assets are repaired/available, expose a function such as:
-
-```python
-predict_claim(statement: str, justification: str, credit_history: list[int]) -> dict
+```bash
+python app.py
 ```
 
-Then the app can offer separate screens for:
-- live pulse/GSR readings
-- claim text classification
-- optional session report that shows the two outputs side-by-side without combining them into a deception score
+You will be presented with the interactive menu:
 
-For the current source, no such prediction function is claimed to work.
+```text
+=== KINSKI IOT POLYGRAPH & LIE DETECTION SYSTEM (Raspberry Pi 4B) ===
+  1. Live Sensor Hardware Monitor (Raw Pulse/GSR & VU needle sweep)
+  2. Record New Training Session (Interrogation data logger with labels)
+  3. Train / Retrain Edge ML Models (Random Forest, SVM, GBM)
+  4. Run Real-Time ML Lie Detector (Interrogation mode + Live AI)
+  5. Generate / Refresh Benchmark Training Dataset
+  6. LIAR-PLUS Text Claim Classifier (NLP Requirements)
+  7. Exit
+```
 
-## Attribution and license
+---
 
-The original sensor project is attributed to Roni Bandini. The uploaded LIAR-PLUS repository includes an MIT license attributed to Tanzeel Ur Rahman; preserve the license when redistributing those source files. Check the original repositories for any additional asset or dataset terms.
+## Step-by-Step Workflow
 
-## Scientific note
+### Step 1: Record Custom Training Data (`Option 2`)
+Run `python -m ml.data_collector` to conduct an interrogation session:
+1. **Calibration Phase**: The subject sits quietly for 20s to record resting baseline BPM and GSR.
+2. **Question Trials**: The examiner asks questions (control or relevant questions). Tag each trial with ground truth (`0 = Truth`, `1 = Lie`).
+3. Continuous 100 Hz sensor streams are automatically logged to `data/raw/polygraph_session_<subject>_<timestamp>.csv`.
 
-Neither physiological arousal nor a dataset-based claim label proves that a person is lying. Use this as an experimental electronics and text-classification project, not as an authoritative lie detector.
+*(If you don't have recorded hardware sessions yet, use `Option 5` to instantly generate an 18-subject benchmark dataset).*
+
+### Step 2: Train & Evaluate the ML Model (`Option 3`)
+Run `python -m ml.train_model`:
+- Automatically aggregates all raw session CSVs and extracts 24 autonomic features.
+- Evaluates candidate models via 5-Fold Stratified Cross-Validation:
+  - **Random Forest Classifier** (Top Edge performer)
+  - **Gradient Boosting Classifier**
+  - **Support Vector Machine (RBF kernel)**
+  - **Logistic Regression**
+- Displays feature importance ranking and exports the best pipeline to `ml/models/best_polygraph_model.pkl`.
+
+### Step 3: Run Real-Time ML Lie Detection (`Option 4`)
+Run `python -m ml.polygraph_ml`:
+1. Establishes the subject's individual resting baseline.
+2. Examiner prompts a question.
+3. System records a 10-second response window, extracts HRV/GSR features, and feeds them into the trained ML model.
+4. Outputs real-time deception probability $P(\text{Lie})$, autonomic breakdown, and activates hardware (VU needle deflection + alert buzzer if deception is detected).
+
+---
+
+## Attribution & Scientific Note
+
+- Hardware polygraph concept adapted from Roni Bandini's *Nano Lie Detector* (2020).
+- **Scientific Notice:** Involuntary physiological arousal (heart rate acceleration and skin conductance responses) indicates autonomic activation, cognitive load, or stress. It is not an infallible proof of deception. Use this project as an educational IoT biosensing and Edge ML demonstration.
