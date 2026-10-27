@@ -19,6 +19,7 @@ import sys
 import time
 import math
 import random
+import serial
 import csv
 from datetime import datetime
 from pathlib import Path
@@ -48,15 +49,28 @@ except Exception:
 
 
 class SensorReader:
-    """Reads Pulse and GSR from MCP3008 ADC or generates simulated physiological responses."""
+    """Reads Pulse from ESP8266 (MAX30102) over USB Serial, with fallback simulation."""
 
-    def __init__(self, mock: bool = not SPI_AVAILABLE):
+    def __init__(self, mock: bool = False, serial_port: str = "/dev/ttyUSB0", baud_rate: int = 115200):
         self.mock = mock
+        self.ser = None
+        self.last_pulse = 512
+        
+        # Simulation variables (used only if ESP8266 is disconnected)
         self.sim_phase = 0.0
         self.sim_base_bpm = 72.0
         self.sim_base_gsr = 350.0
-        self.current_state = "neutral"  # "neutral", "truth", "lie"
+        self.current_state = "neutral"
         self.sim_stress_factor = 0.0
+
+        # Try connecting to the ESP8266 over USB
+        if not self.mock:
+            try:
+                self.ser = serial.Serial(serial_port, baud_rate, timeout=0.05)
+                print(f"[Hardware] Connected to ESP8266 Pulse Sensor on {serial_port}")
+            except Exception as e:
+                print(f"[Notice] Could not open {serial_port} ({e}). Running in Simulation Mode.")
+                self.mock = True
 
     def set_simulation_state(self, state: str):
         """Used in mock mode to simulate physiological arousal for truth vs lie."""
@@ -70,19 +84,42 @@ class SensorReader:
 
     def read_raw(self):
         """Returns tuple of (pulse_raw [0-1023], gsr_raw [0-1023])."""
-        if not self.mock and SPI_AVAILABLE:
+        # --- 1. PHYSICAL HARDWARE MODE (ESP8266 + MAX30102) ---
+        if not self.mock and self.ser is not None:
             try:
-                # Read CH0 (Pulse)
-                r_pulse = spi.xfer2([1, (8 + PULSE_CHANNEL) << 4, 0])
-                pulse = ((r_pulse[1] & 3) << 8) | r_pulse[2]
+                # Read incoming lines from ESP8266 (format: "IR:98421\n")
+                while self.ser.in_waiting:
+                    line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                    if "IR:" in line:
+                        raw_ir = int(line.split("IR:")[1])
+                        if raw_ir > 50000:
+                            # Normalize 18-bit MAX30102 IR reflection into 0-1023 range
+                            # Centers typical resting finger pulse around ~512
+                            normalized = int(512 + (raw_ir - 90000) / 100.0)
+                            self.last_pulse = max(0, min(1023, normalized))
 
-                # Read CH1 (GSR)
-                r_gsr = spi.xfer2([1, (8 + GSR_CHANNEL) << 4, 0])
-                gsr = ((r_gsr[1] & 3) << 8) | r_gsr[2]
-                return pulse, gsr
+                # Baseline GSR value (350-450) until your physical GSR arrives
+                gsr_val = 400
+                return self.last_pulse, gsr_val
             except Exception as e:
-                print(f"[Warning] Hardware read failed ({e}), falling back to mock.")
+                print(f"[Warning] Serial read error ({e}), switching to simulation.")
                 self.mock = True
+
+        # --- 2. FALLBACK SIMULATION MODE (If ESP8266 is unplugged) ---
+        target_bpm = self.sim_base_bpm + (22.0 * self.sim_stress_factor)
+        freq = target_bpm / 60.0
+        self.sim_phase += (2.0 * math.pi * freq) * (1.0 / DEFAULT_SAMPLE_RATE_HZ)
+
+        pulse_wave = (math.sin(self.sim_phase) + 0.35 * math.sin(2.0 * self.sim_phase))
+        pulse_raw = int(512 + 180 * pulse_wave + random.uniform(-10, 10))
+        pulse_raw = max(0, min(1023, pulse_raw))
+
+        target_gsr = self.sim_base_gsr + (350.0 * self.sim_stress_factor)
+        self.sim_base_gsr += 0.01 * (target_gsr - self.sim_base_gsr)
+        gsr_raw = int(self.sim_base_gsr + random.uniform(-4, 4))
+        gsr_raw = max(0, min(1023, gsr_raw))
+
+        return pulse_raw, gsr_raw
 
         # Mock / Simulation mode
         # Simulate realistic cardiac waveform with stress modulation
